@@ -2,41 +2,101 @@ const express = require('express');
 const server = require('http').createServer();
 const app = express();
 
-app.get('/', function(req, res) {
-    res.sendFile('index.html', {root: __dirname});
+app.get('/', function (req, res) {
+    res.sendFile('index.html', { root: __dirname });
 });
 
 server.on('request', app);
 
-server.listen(3000, function() {
-    console.log('server started on 3000')
-}) 
+server.listen(3000, function () {
+    console.log('server started on 3000');
+});
 
-// --- WebSockeet ---
+process.on('SIGINT', () => {
+    wss.clients.forEach(function each(client){
+        client.close(); 
+    });
+    server.close(() => {
+        shutDownDB();
+    });
+});
+
+// --- WebSocket ---
+
 const WebSocketServer = require('ws').Server;
 
-const wss = new WebSocketServer({server: server});
+const wss = new WebSocketServer({ server });
 
-wss.on('connection', function connection (ws) {
+wss.on('connection', function connection(ws) {
     const numClients = wss.clients.size;
-    console.log('Clients connected', numClients);
 
-    wss.broadcast(`Current visitirs ${numClients}`);
+    console.log('Clients connected:', numClients);
 
-    if(ws.readyState === ws.OPEN){
+    wss.broadcast(`Current visitors: ${numClients}`);
+
+    if (ws.readyState === ws.OPEN) {
         ws.send('Welcome to my server');
     }
 
-    wss.on('close', function(){
-        wss.broadcast(`Current visitirs ${numClients}`);
-        console.log('A client has dissconnedcted');
-    });
+    db.run(
+        `
+        INSERT INTO visitors (count, time)
+        VALUES (?, datetime('now'))
+        `,
+        [numClients]
+    );
 
-    
+    ws.on('close', function () {
+        const numClients = wss.clients.size;
+
+        wss.broadcast(`Current visitors: ${numClients}`);
+        console.log('A client has disconnected');
+    });
 });
 
 wss.broadcast = function broadcast(data) {
     wss.clients.forEach(function each(client) {
-        client.send(data);
-    })
+        if (client.readyState === client.OPEN) {
+            client.send(data);
+        }
+    });
+};
+
+// --- Database ---
+
+const sqlite = require('sqlite3');
+const db = new sqlite.Database(':memory:');
+
+db.serialize(() => {
+    db.run(`
+        CREATE TABLE visitors (
+            count INTEGER,
+            time TEXT
+        )
+    `);
+});
+
+function getCounts() {
+    db.each('SELECT * FROM visitors', (err, row) => {
+        if (err) {
+            console.error(err);
+            return;
+        }
+
+        console.log(row);
+    });
+}
+
+function shutDownDB() {
+    getCounts();
+
+    console.log('shutting down DB');
+
+    db.close((err) => {
+        if (err) {
+            console.error(err);
+        }
+
+        process.exit(0);
+    });
 }
